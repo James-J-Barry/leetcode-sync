@@ -82,14 +82,14 @@ def main() -> None:
 
     print("Fetching submissions from LeetCode...")
     try:
-        all_meta = sync(client, repo_root)
+        solved = sync(client, repo_root)
     except LeetCodeAuthError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
-    readme = render_readme(all_meta)
+    readme = render_readme(solved)
     (repo_root / "README.md").write_text(readme)
-    print(f"Synced {len(all_meta)} problems. Wrote README.md and solutions/.")
+    print(f"Synced {len(solved)} problems. Wrote README.md and solutions/.")
 
     if not args.no_commit:
         commit_and_maybe_push(repo_root, push=args.push)

@@ -61,7 +61,7 @@ class QuestionMeta:
 
 
 class LeetCodeClient:
-    def __init__(self, session_cookie: str, csrf_token: str, request_delay: float = 0.75):
+    def __init__(self, session_cookie: str, csrf_token: str, request_delay: float = 3.0):
         self.session = requests.Session()
         self.session.cookies.set("LEETCODE_SESSION", session_cookie, domain="leetcode.com")
         self.session.cookies.set("csrftoken", csrf_token, domain="leetcode.com")
@@ -75,16 +75,28 @@ class LeetCodeClient:
         )
         self.request_delay = request_delay
 
-    def _get(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
-        resp = self.session.get(url, params=params, timeout=30)
-        if resp.status_code in (401, 403):
-            raise LeetCodeAuthError(
-                "LeetCode rejected the request (401/403). Your LEETCODE_SESSION "
-                "or csrftoken cookie is likely missing or expired — re-extract "
-                "them from your browser and update your .env file."
-            )
-        resp.raise_for_status()
-        return resp.json()
+    def _get(self, url: str, params: dict[str, Any], retries: int = 4) -> dict[str, Any]:
+        backoff = 5.0
+        for attempt in range(retries + 1):
+            resp = self.session.get(url, params=params, timeout=30)
+            if resp.status_code in (401, 403):
+                if attempt < retries:
+                    # LeetCode's bot-protection briefly 403s bursts of requests
+                    # even with a valid cookie; back off and retry before
+                    # concluding the cookie itself is bad.
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                raise LeetCodeAuthError(
+                    "LeetCode kept rejecting the request (401/403) after "
+                    f"{retries} retries with backoff. Either your LEETCODE_SESSION "
+                    "/ csrftoken cookie is expired (re-extract it from your browser), "
+                    "or LeetCode is rate-limiting this connection — wait a few minutes "
+                    "and try again."
+                )
+            resp.raise_for_status()
+            return resp.json()
+        raise AssertionError("unreachable")
 
     def iter_all_submissions(self):
         """Yield every submission (any status/language), newest first."""

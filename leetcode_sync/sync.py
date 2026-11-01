@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .client import LeetCodeClient, QuestionMeta
 from .languages import extension_for
 
-DIFFICULTY_ORDER = {"Easy": 0, "Medium": 1, "Hard": 2}
+@dataclass
+class SolvedProblem:
+    meta: QuestionMeta
+    solved_at: int  # unix timestamp of the most recent Accepted submission
 
 
 def collect_latest_accepted(client: LeetCodeClient) -> dict[str, dict]:
@@ -48,14 +53,14 @@ def sync(
     repo_root: Path,
     solutions_dirname: str = "solutions",
     cache_filename: str = ".leetcode_meta_cache.json",
-) -> list[QuestionMeta]:
+) -> list[SolvedProblem]:
     solutions_dir = repo_root / solutions_dirname
     solutions_dir.mkdir(parents=True, exist_ok=True)
     cache_path = repo_root / cache_filename
     meta_cache = load_meta_cache(cache_path)
 
     by_slug = collect_latest_accepted(client)
-    all_meta: list[QuestionMeta] = []
+    solved: list[SolvedProblem] = []
 
     for slug, by_lang in sorted(by_slug.items()):
         if slug in meta_cache:
@@ -76,7 +81,8 @@ def sync(
                 "difficulty": meta.difficulty,
                 "topics": meta.topics,
             }
-        all_meta.append(meta)
+        solved_at = max(entry["timestamp"] for entry in by_lang.values())
+        solved.append(SolvedProblem(meta=meta, solved_at=solved_at))
 
         problem_dir = solutions_dir / f"{meta.frontend_id}-{slug}"
         problem_dir.mkdir(parents=True, exist_ok=True)
@@ -85,27 +91,26 @@ def sync(
             (problem_dir / f"solution.{ext}").write_text(entry["code"])
 
     save_meta_cache(cache_path, meta_cache)
-    return sorted(
-        all_meta,
-        key=lambda m: (DIFFICULTY_ORDER.get(m.difficulty, 99), int(m.frontend_id)),
-    )
+    return sorted(solved, key=lambda s: s.solved_at, reverse=True)
 
 
-def render_readme(all_meta: list[QuestionMeta], solutions_dirname: str = "solutions") -> str:
+def render_readme(solved: list[SolvedProblem], solutions_dirname: str = "solutions") -> str:
     lines = [
         "# LeetCode Progress",
         "",
-        f"Synced {len(all_meta)} solved problems.",
+        f"Synced {len(solved)} solved problems, most recently submitted first.",
         "",
-        "| # | Title | Difficulty | Topics | Solution |",
-        "|---|-------|------------|--------|----------|",
+        "| Submitted | # | Title | Difficulty | Topics | Solution |",
+        "|-----------|---|-------|------------|--------|----------|",
     ]
-    for m in all_meta:
+    for s in solved:
+        m = s.meta
+        date = datetime.fromtimestamp(s.solved_at, tz=timezone.utc).strftime("%Y-%m-%d")
         topics = ", ".join(m.topics)
         link = f"{solutions_dirname}/{m.frontend_id}-{m.title_slug}/"
         lc_link = f"https://leetcode.com/problems/{m.title_slug}/"
         lines.append(
-            f"| {m.frontend_id} | [{m.title}]({lc_link}) | {m.difficulty} | {topics} | [solution]({link}) |"
+            f"| {date} | {m.frontend_id} | [{m.title}]({lc_link}) | {m.difficulty} | {topics} | [solution]({link}) |"
         )
     lines.append("")
     return "\n".join(lines)
